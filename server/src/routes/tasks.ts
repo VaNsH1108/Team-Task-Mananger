@@ -39,10 +39,8 @@ tasksRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
 
   const role = await getUserProjectRole(userId, projectId);
   if (!role) return res.status(403).json({ error: "Not a project member" });
-
-  // Only admins can assign tasks to others. Members can only self-assign (or unassigned).
-  if (assignedToId && assignedToId !== userId && !isAdmin(role)) {
-    return res.status(403).json({ error: "Admin role required to assign tasks to others" });
+  if (!isAdmin(role)) {
+    return res.status(403).json({ error: "Only project admin can create tasks" });
   }
 
   if (assignedToId) {
@@ -80,6 +78,9 @@ tasksRouter.patch("/:taskId", requireAuth, async (req: AuthedRequest, res) => {
   if (!role) return res.status(403).json({ error: "Not a project member" });
 
   const updatingAssignee = Object.prototype.hasOwnProperty.call(patch, "assignedToId");
+  if (!isAdmin(role) && updatingAssignee) {
+    return res.status(403).json({ error: "Only project admin can reassign tasks" });
+  }
   if (updatingAssignee && patch.assignedToId && patch.assignedToId !== userId && !isAdmin(role)) {
     return res.status(403).json({ error: "Admin role required to reassign tasks to others" });
   }
@@ -89,8 +90,18 @@ tasksRouter.patch("/:taskId", requireAuth, async (req: AuthedRequest, res) => {
     if (!assigneeMembership) return res.status(400).json({ error: "Assignee is not a project member" });
   }
 
-  // Members can update status of tasks within project, but cannot edit title/description/dueDate unless they created the task or are admin.
-  const isPrivileged = isAdmin(role) || task.createdById === userId;
+  // Members can only update status for tasks assigned to them.
+  if (!isAdmin(role)) {
+    const fullTask = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { assignedToId: true }
+    });
+    if (fullTask?.assignedToId !== userId) {
+      return res.status(403).json({ error: "Members can only update tasks assigned to them" });
+    }
+  }
+
+  const isPrivileged = isAdmin(role);
   const isEditingMetadata =
     Object.prototype.hasOwnProperty.call(patch, "title") ||
     Object.prototype.hasOwnProperty.call(patch, "description") ||
@@ -98,7 +109,7 @@ tasksRouter.patch("/:taskId", requireAuth, async (req: AuthedRequest, res) => {
     updatingAssignee;
 
   if (isEditingMetadata && !isPrivileged) {
-    return res.status(403).json({ error: "Only task creator or project admin can edit task details" });
+    return res.status(403).json({ error: "Only project admin can edit task details" });
   }
 
   const updated = await prisma.task.update({
@@ -138,8 +149,8 @@ tasksRouter.delete("/:taskId", requireAuth, async (req: AuthedRequest, res) => {
   const role = await getUserProjectRole(userId, task.projectId);
   if (!role) return res.status(403).json({ error: "Not a project member" });
 
-  if (!isAdmin(role) && task.createdById !== userId) {
-    return res.status(403).json({ error: "Only task creator or project admin can delete tasks" });
+  if (!isAdmin(role)) {
+    return res.status(403).json({ error: "Only project admin can delete tasks" });
   }
 
   await prisma.task.delete({ where: { id: taskId } });

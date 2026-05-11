@@ -1,4 +1,4 @@
-export type ApiError = { error: string; issues?: unknown };
+export type ApiError = { error?: string; message?: string; code?: string; issues?: unknown; details?: string[] };
 
 export type AuthResponse = {
   user: { id: string; email: string; name: string };
@@ -13,7 +13,7 @@ export type Project = {
   name: string;
   description?: string | null;
   updatedAt?: string;
-  members?: Array<{ userId?: string; role: ProjectRole; user: { email: string; name: string } }>;
+  members?: Array<{ userId?: string; role: ProjectRole; user: { id?: string; email: string; name: string } }>;
 };
 
 export type Task = {
@@ -57,7 +57,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // ignore
     }
-    throw new Error(body?.error || `Request failed (${res.status})`);
+    throw new Error(body?.message || body?.error || `Request failed (${res.status})`);
   }
   return (await res.json()) as T;
 }
@@ -72,11 +72,19 @@ export const api = {
   createProject: (body: { name: string; description?: string }) =>
     request<{ project: Project }>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
   getProject: (projectId: string) => request<{ project: Project }>(`/api/projects/${projectId}`),
-  addMember: (projectId: string, body: { email: string; role?: ProjectRole }) =>
-    request<{ member: unknown }>(`/api/projects/${projectId}/members`, {
-      method: "POST",
+  patchProject: (projectId: string, body: { name?: string; description?: string | null }) =>
+    request<{ project: Project }>(`/api/projects/${projectId}`, {
+      method: "PATCH",
       body: JSON.stringify(body)
     }),
+  addMember: (projectId: string, body: { email: string; role?: ProjectRole }) =>
+    request<{ member: { id: string; role: ProjectRole; user: { id: string; email: string; name: string } } }>(
+      `/api/projects/${projectId}/members`,
+      {
+      method: "POST",
+      body: JSON.stringify(body)
+      }
+    ),
   listTasks: (projectId?: string) =>
     request<{ tasks: Task[] }>(projectId ? `/api/tasks?projectId=${encodeURIComponent(projectId)}` : "/api/tasks"),
   createTask: (body: {

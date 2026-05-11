@@ -1,49 +1,43 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, setToken, type Project, type Task, type TaskStatus } from "./api";
+import { api, setToken, type Project, type ProjectRole, type Task, type TaskStatus } from "./api";
 import "./styles.css";
 
 type View = "auth" | "dashboard" | "projects" | "project";
+
+function isEmail(v: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+}
+
+function validatePassword(password: string) {
+  if (password.length < 8) return "Password must be at least 8 characters";
+  if (!/[A-Z]/.test(password)) return "Password must include an uppercase letter";
+  if (!/[a-z]/.test(password)) return "Password must include a lowercase letter";
+  if (!/[0-9]/.test(password)) return "Password must include a number";
+  return null;
+}
 
 export function App() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<{ id: string; email: string; name: string } | null>(null);
   const [view, setView] = useState<View>("dashboard");
   const [error, setError] = useState<string | null>(null);
-
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const activeProject = useMemo(
-    () => projects.find((p) => p.id === activeProjectId) ?? null,
-    [projects, activeProjectId]
-  );
-
   const [tasks, setTasks] = useState<Task[]>([]);
   const [dashboard, setDashboard] = useState<{
     statusCounts: { TODO: number; IN_PROGRESS: number; DONE: number };
     overdueAssigned: Task[];
     myTasks: Task[];
   } | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
-  async function bootstrap() {
-    setError(null);
-    setLoading(true);
-    try {
-      const me = await api.me();
-      if (!me.user) {
-        setUser(null);
-        setView("auth");
-        return;
-      }
-      setUser(me.user);
-      setView("dashboard");
-      await refreshAll();
-    } catch (e) {
-      setUser(null);
-      setView("auth");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === activeProjectId) ?? null,
+    [projects, activeProjectId]
+  );
+  const activeMembershipRole = useMemo(() => {
+    if (!activeProject || !user) return null;
+    return activeProject.members?.find((m) => m.userId === user.id)?.role ?? null;
+  }, [activeProject, user]);
 
   async function refreshAll() {
     const [p, d] = await Promise.all([api.listProjects(), api.dashboard()]);
@@ -57,18 +51,35 @@ export function App() {
   }
 
   useEffect(() => {
+    const bootstrap = async () => {
+      setError(null);
+      setLoading(true);
+      try {
+        const me = await api.me();
+        if (!me.user) {
+          setView("auth");
+          return;
+        }
+        setUser(me.user);
+        setView("dashboard");
+        await refreshAll();
+      } catch {
+        setView("auth");
+      } finally {
+        setLoading(false);
+      }
+    };
     void bootstrap();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function onAuth(accessToken: string, u: { id: string; email: string; name: string }) {
+  const onAuth = async (accessToken: string, u: { id: string; email: string; name: string }) => {
     setToken(accessToken);
     setUser(u);
     setView("dashboard");
     await refreshAll();
-  }
+  };
 
-  function logout() {
+  const logout = () => {
     setToken(null);
     setUser(null);
     setProjects([]);
@@ -76,110 +87,74 @@ export function App() {
     setDashboard(null);
     setActiveProjectId(null);
     setView("auth");
-  }
+  };
 
-  if (loading) {
-    return (
-      <div className="container">
-        <div className="card">Loading…</div>
-      </div>
-    );
-  }
+  if (loading) return <div className="container"><div className="card">Loading workspace...</div></div>;
 
   return (
-    <div className="container">
-      <div className="nav">
-        <div className="navLeft">
-          <strong>Team Task Manager</strong>
-          {user ? <span className="pill">{user.name}</span> : <span className="pill">Guest</span>}
-        </div>
-        <div className="navRight">
+    <>
+      <div className="fxBlob" />
+      <div className="fxBlob2" />
+      <div className="container">
+        <div className="nav">
+          <div className="navLeft">
+            <strong>Ethara Team Task Manager</strong>
+            {user ? <span className="pill">{user.name}</span> : <span className="pill">Secure Access</span>}
+          </div>
           {user && (
-            <>
-              <button className="btn" onClick={() => setView("dashboard")}>
-                Dashboard
-              </button>
-              <button
-                className="btn"
-                onClick={async () => {
-                  setView("projects");
-                  await refreshAll();
-                }}
-              >
-                Projects
-              </button>
-              <button className="btn btnDanger" onClick={logout}>
-                Logout
-              </button>
-            </>
+            <div className="navRight">
+              <button className="btn btnGhost" onClick={() => setView("dashboard")}>Dashboard</button>
+              <button className="btn btnGhost" onClick={async () => { setView("projects"); await refreshAll(); }}>Projects</button>
+              <button className="btn btnDanger" onClick={logout}>Logout</button>
+            </div>
           )}
         </div>
-      </div>
 
-      <div style={{ height: 16 }} />
+        <div style={{ height: 16 }} />
+        {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
 
-      {error && (
-        <div className="error" style={{ marginBottom: 16 }}>
-          {error}
-        </div>
-      )}
+        {view === "auth" && <AuthCard onAuth={onAuth} setError={setError} />}
+        {user && view === "dashboard" && dashboard && <DashboardCard dashboard={dashboard} onRefresh={refreshAll} />}
 
-      {view === "auth" && <AuthCard onAuth={onAuth} setError={setError} />}
-
-      {user && view === "dashboard" && dashboard && (
-        <DashboardCard dashboard={dashboard} onRefresh={refreshAll} />
-      )}
-
-      {user && view === "projects" && (
-        <div className="split">
-          <ProjectsCard
-            projects={projects}
-            activeProjectId={activeProjectId}
-            onSelect={async (id) => {
-              setActiveProjectId(id);
-              setView("project");
-              await refreshTasks(id);
-            }}
-            onCreated={async () => {
-              await refreshAll();
-            }}
-            setError={setError}
-          />
-          <div className="card">
-            <div className="muted">Select a project to manage tasks.</div>
+        {user && view === "projects" && (
+          <div className="split">
+            <ProjectsCard
+              projects={projects}
+              activeProjectId={activeProjectId}
+              onSelect={async (id) => { setActiveProjectId(id); setView("project"); await refreshTasks(id); }}
+              onCreated={refreshAll}
+              setError={setError}
+            />
+            <div className="card"><div className="muted">Select a project to open full task and member controls.</div></div>
           </div>
-        </div>
-      )}
+        )}
 
-      {user && view === "project" && activeProjectId && (
-        <div className="split">
-          <ProjectsCard
-            projects={projects}
-            activeProjectId={activeProjectId}
-            onSelect={async (id) => {
-              setActiveProjectId(id);
-              await refreshTasks(id);
-            }}
-            onCreated={async () => refreshAll()}
-            setError={setError}
-          />
-          <ProjectDetailCard
-            project={activeProject}
-            tasks={tasks}
-            onRefreshTasks={() => refreshTasks(activeProjectId)}
-            onRefreshAll={refreshAll}
-            setError={setError}
-          />
-        </div>
-      )}
-    </div>
+        {user && view === "project" && activeProjectId && (
+          <div className="split">
+            <ProjectsCard
+              projects={projects}
+              activeProjectId={activeProjectId}
+              onSelect={async (id) => { setActiveProjectId(id); await refreshTasks(id); }}
+              onCreated={refreshAll}
+              setError={setError}
+            />
+            <ProjectDetailCard
+              user={user}
+              role={activeMembershipRole}
+              project={activeProject}
+              tasks={tasks}
+              onRefreshTasks={() => refreshTasks(activeProjectId)}
+              onRefreshAll={refreshAll}
+              setError={setError}
+            />
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
-function AuthCard({
-  onAuth,
-  setError
-}: {
+function AuthCard({ onAuth, setError }: {
   onAuth: (token: string, user: { id: string; email: string; name: string }) => Promise<void>;
   setError: (s: string | null) => void;
 }) {
@@ -188,61 +163,59 @@ function AuthCard({
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setError(null);
+    setValidationError(null);
+    const cleanedEmail = email.trim().toLowerCase();
+    if (!isEmail(cleanedEmail)) return setValidationError("Please enter a valid email address.");
+    if (mode === "signup" && name.trim().length < 2) return setValidationError("Name must be at least 2 characters.");
+    const passErr = mode === "signup" ? validatePassword(password) : null;
+    if (passErr) return setValidationError(passErr);
+
+    setBusy(true);
+    try {
+      const data = mode === "login"
+        ? await api.login({ email: cleanedEmail, password })
+        : await api.signup({ email: cleanedEmail, name: name.trim(), password });
+      await onAuth(data.accessToken, data.user);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Authentication failed");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div className="card" style={{ maxWidth: 520, margin: "0 auto" }}>
+    <div className="card" style={{ maxWidth: 560, margin: "0 auto" }}>
       <div className="cardHeader">
-        <h2 className="title">{mode === "login" ? "Login" : "Create account"}</h2>
-        <button className="btn" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
-          Switch to {mode === "login" ? "Signup" : "Login"}
+        <h2 className="title">{mode === "login" ? "Welcome back" : "Create your workspace account"}</h2>
+        <button className="btn btnGhost" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
+          {mode === "login" ? "Need an account?" : "Already have an account?"}
         </button>
       </div>
 
-      <label className="label">Email</label>
-      <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <div className="demoProfiles">
+        <div className="profileCard"><strong>Admin</strong><div className="muted">Can manage members, projects and all tasks.</div></div>
+        <div className="profileCard"><strong>Member</strong><div className="muted">Can work on assigned tasks with controlled access.</div></div>
+      </div>
 
+      <label className="label">Work Email</label>
+      <input className="input" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
       {mode === "signup" && (
         <>
-          <label className="label">Name</label>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="label">Full Name</label>
+          <input className="input" placeholder="e.g. Rohan Sharma" value={name} onChange={(e) => setName(e.target.value)} />
         </>
       )}
-
       <label className="label">Password</label>
-      <input
-        className="input"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-
+      <input className="input" type="password" placeholder="Minimum 8 chars, uppercase, lowercase, number" value={password} onChange={(e) => setPassword(e.target.value)} />
+      {validationError && <div className="error" style={{ marginTop: 10 }}>{validationError}</div>}
       <div style={{ height: 12 }} />
-      <button
-        className="btn btnPrimary"
-        disabled={busy}
-        onClick={async () => {
-          setError(null);
-          setBusy(true);
-          try {
-            const data =
-              mode === "login"
-                ? await api.login({ email, password })
-                : await api.signup({ email, name, password });
-            await onAuth(data.accessToken, data.user);
-          } catch (e) {
-            setError(e instanceof Error ? e.message : "Auth failed");
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {busy ? "Please wait…" : mode === "login" ? "Login" : "Signup"}
+      <button className="btn btnPrimary" disabled={busy} onClick={submit}>
+        {busy ? "Please wait..." : mode === "login" ? "Login Securely" : "Create Account"}
       </button>
-
-      <div style={{ height: 10 }} />
-      <div className="muted">
-        Tip: Create two accounts to test roles. The project creator becomes <b>Admin</b>.
-      </div>
     </div>
   );
 }
@@ -267,18 +240,18 @@ function DashboardCard({
             Refresh
           </button>
         </div>
-        <div className="row">
+        <div className="grid3">
           <div className="card" style={{ flex: 1, minWidth: 180 }}>
             <div className="muted">TODO</div>
-            <div style={{ fontSize: 28, fontWeight: 900 }}>{dashboard.statusCounts.TODO}</div>
+            <div className="kpi">{dashboard.statusCounts.TODO}</div>
           </div>
           <div className="card" style={{ flex: 1, minWidth: 180 }}>
             <div className="muted">IN PROGRESS</div>
-            <div style={{ fontSize: 28, fontWeight: 900 }}>{dashboard.statusCounts.IN_PROGRESS}</div>
+            <div className="kpi">{dashboard.statusCounts.IN_PROGRESS}</div>
           </div>
           <div className="card" style={{ flex: 1, minWidth: 180 }}>
             <div className="muted">DONE</div>
-            <div style={{ fontSize: 28, fontWeight: 900 }}>{dashboard.statusCounts.DONE}</div>
+            <div className="kpi">{dashboard.statusCounts.DONE}</div>
           </div>
         </div>
       </div>
@@ -323,6 +296,7 @@ function ProjectsCard({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   return (
     <div className="card">
@@ -358,22 +332,29 @@ function ProjectsCard({
       <div className="card" style={{ padding: 14 }}>
         <div style={{ fontWeight: 900, marginBottom: 6 }}>Create new project</div>
         <label className="label">Name</label>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="input" placeholder="Product Revamp Q3" value={name} onChange={(e) => setName(e.target.value)} />
         <label className="label">Description</label>
         <input
           className="input"
+          placeholder="Describe project scope, goals and deliverables"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
+        {localError && <div className="error" style={{ marginTop: 10 }}>{localError}</div>}
         <div style={{ height: 10 }} />
         <button
           className="btn btnPrimary"
           disabled={busy}
           onClick={async () => {
+            setLocalError(null);
+            if (name.trim().length < 2) {
+              setLocalError("Project name must be at least 2 characters.");
+              return;
+            }
             setBusy(true);
             setError(null);
             try {
-              await api.createProject({ name, description: description || undefined });
+              await api.createProject({ name: name.trim(), description: description.trim() || undefined });
               setName("");
               setDescription("");
               await onCreated();
@@ -392,12 +373,16 @@ function ProjectsCard({
 }
 
 function ProjectDetailCard({
+  user,
+  role,
   project,
   tasks,
   onRefreshTasks,
   onRefreshAll,
   setError
 }: {
+  user: { id: string; email: string; name: string };
+  role: "ADMIN" | "MEMBER" | null;
   project: Project | null;
   tasks: Task[];
   onRefreshTasks: () => Promise<void>;
@@ -407,8 +392,19 @@ function ProjectDetailCard({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [projectName, setProjectName] = useState(project?.name ?? "");
+  const [projectDesc, setProjectDesc] = useState(project?.description ?? "");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "ALL">("ALL");
+  const [assignedToId, setAssignedToId] = useState<string>("");
+  const [memberEmail, setMemberEmail] = useState("");
+  const [memberRole, setMemberRole] = useState<ProjectRole>("MEMBER");
+  const [localError, setLocalError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setProjectName(project?.name ?? "");
+    setProjectDesc(project?.description ?? "");
+  }, [project?.id, project?.name, project?.description]);
 
   if (!project) {
     return (
@@ -419,6 +415,9 @@ function ProjectDetailCard({
   }
 
   const filtered = tasks.filter((t) => (statusFilter === "ALL" ? true : t.status === statusFilter));
+
+  const isAdmin = role === "ADMIN";
+  const members = project.members ?? [];
 
   return (
     <div className="card">
@@ -441,33 +440,55 @@ function ProjectDetailCard({
       <div className="grid2">
         <div className="card">
           <div style={{ fontWeight: 900, marginBottom: 6 }}>Create task</div>
+          {!isAdmin && (
+            <div className="muted" style={{ marginBottom: 8 }}>
+              Member mode: only admins can create/edit/delete tasks.
+            </div>
+          )}
           <label className="label">Title</label>
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input className="input" disabled={!isAdmin} placeholder="Write API contracts for payment module" value={title} onChange={(e) => setTitle(e.target.value)} />
           <label className="label">Description</label>
           <textarea
             className="textarea"
+            disabled={!isAdmin}
+            placeholder="Acceptance criteria, context and implementation notes"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
+          <label className="label">Assign to</label>
+          <select className="select" disabled={!isAdmin} value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)}>
+            <option value="">Unassigned</option>
+            {members.map((m) => (
+              <option key={m.user.email} value={m.user.id ?? ""}>{m.user.name} ({m.role})</option>
+            ))}
+          </select>
           <label className="label">Due date (optional)</label>
-          <input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          <input className="input" type="date" disabled={!isAdmin} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           <div style={{ height: 10 }} />
+          {localError && <div className="error" style={{ marginTop: 10 }}>{localError}</div>}
           <button
             className="btn btnPrimary"
-            disabled={busy}
+            disabled={busy || !isAdmin}
             onClick={async () => {
+              setLocalError(null);
+              if (title.trim().length < 3) {
+                setLocalError("Task title must be at least 3 characters.");
+                return;
+              }
               setError(null);
               setBusy(true);
               try {
                 await api.createTask({
                   projectId: project.id,
-                  title,
-                  description: description || undefined,
+                  title: title.trim(),
+                  description: description.trim() || undefined,
+                  assignedToId: assignedToId || undefined,
                   dueDate: dueDate ? new Date(dueDate).toISOString() : undefined
                 });
                 setTitle("");
                 setDescription("");
                 setDueDate("");
+                setAssignedToId("");
                 await onRefreshTasks();
               } catch (e) {
                 setError(e instanceof Error ? e.message : "Failed to create task");
@@ -478,14 +499,76 @@ function ProjectDetailCard({
           >
             {busy ? "Creating…" : "Create task"}
           </button>
-          <div style={{ height: 10 }} />
-          <div className="muted" style={{ fontSize: 12 }}>
-            Assignment UI is kept minimal here; admins can reassign via task edit endpoint.
-          </div>
         </div>
 
         <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>Filter</div>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>Project controls</div>
+          <div className="muted" style={{ marginBottom: 8 }}>
+            {isAdmin ? "Admin mode: you can rename the project." : "Member mode: project settings are read-only."}
+          </div>
+          <label className="label">Project name</label>
+          <input className="input" disabled={!isAdmin} placeholder="Project name" value={projectName} onChange={(e) => setProjectName(e.target.value)} />
+          <label className="label">Description</label>
+          <textarea className="textarea" disabled={!isAdmin} placeholder="Project description" value={projectDesc ?? ""} onChange={(e) => setProjectDesc(e.target.value)} />
+          <div style={{ height: 10 }} />
+          <button
+            className="btn"
+            disabled={!isAdmin}
+            onClick={async () => {
+              setError(null);
+              if (projectName.trim().length < 2) {
+                setError("Project name must be at least 2 characters.");
+                return;
+              }
+              try {
+                await api.patchProject(project.id, { name: projectName.trim(), description: projectDesc.trim() || null });
+                await onRefreshAll();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Project update failed");
+              }
+            }}
+          >
+            Save project settings
+          </button>
+
+          {isAdmin && (
+            <>
+              <hr style={{ borderColor: "rgba(255,255,255,0.16)", margin: "14px 0" }} />
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>Team member access</div>
+              <label className="label">Member email</label>
+              <input className="input" placeholder="member@company.com" value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
+              <label className="label">Role</label>
+              <select className="select" value={memberRole} onChange={(e) => setMemberRole(e.target.value as ProjectRole)}>
+                <option value="MEMBER">MEMBER</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+              <div style={{ height: 10 }} />
+              <button
+                className="btn btnPrimary"
+                onClick={async () => {
+                  setError(null);
+                  if (!isEmail(memberEmail)) {
+                    setError("Please enter a valid member email.");
+                    return;
+                  }
+                  try {
+                    await api.addMember(project.id, { email: memberEmail.trim().toLowerCase(), role: memberRole });
+                    setMemberEmail("");
+                    setMemberRole("MEMBER");
+                    await onRefreshAll();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : "Failed to add member");
+                  }
+                }}
+              >
+                Add member
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="card" style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>Filter tasks</div>
           <label className="label">Status</label>
           <select
             className="select"
@@ -499,7 +582,6 @@ function ProjectDetailCard({
           </select>
           <div style={{ height: 10 }} />
           <div className="muted">Showing {filtered.length} tasks</div>
-        </div>
       </div>
 
       <div style={{ height: 14 }} />
@@ -509,6 +591,8 @@ function ProjectDetailCard({
         filtered.map((t) => (
           <TaskEditorRow
             key={t.id}
+            canAdminEdit={isAdmin}
+            canMemberUpdateStatus={t.assignedTo?.id === user.id}
             task={t}
             onUpdated={onRefreshTasks}
             onDeleted={onRefreshTasks}
@@ -539,25 +623,47 @@ function TaskRow({ task }: { task: Task }) {
 }
 
 function TaskEditorRow({
+  canAdminEdit,
+  canMemberUpdateStatus,
   task,
   onUpdated,
   onDeleted,
   setError
 }: {
+  canAdminEdit: boolean;
+  canMemberUpdateStatus: boolean;
   task: Task;
   onUpdated: () => Promise<void>;
   onDeleted: () => Promise<void>;
   setError: (s: string | null) => void;
 }) {
   const [status, setStatus] = useState<TaskStatus>(task.status);
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description ?? "");
   const [busy, setBusy] = useState(false);
 
   return (
     <div className="card" style={{ padding: 12, marginBottom: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis" }}>{task.title}</div>
+        <div style={{ minWidth: 0, width: "100%" }}>
+          <input
+            className="input"
+            disabled={!canAdminEdit}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Task title"
+            style={{ marginBottom: 8 }}
+          />
+          <textarea
+            className="textarea"
+            disabled={!canAdminEdit}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Task description"
+            style={{ minHeight: 64 }}
+          />
           <div className="muted" style={{ fontSize: 12 }}>
+            {task.assignedTo?.name ? `Assigned: ${task.assignedTo.name} • ` : ""}
             {task.dueDate ? `Due: ${new Date(task.dueDate).toLocaleDateString()}` : "No due date"}
           </div>
         </div>
@@ -569,12 +675,19 @@ function TaskEditorRow({
           </select>
           <button
             className="btn btnPrimary"
-            disabled={busy}
+            disabled={busy || (!canAdminEdit && !canMemberUpdateStatus)}
             onClick={async () => {
               setBusy(true);
               setError(null);
               try {
-                await api.patchTask(task.id, { status });
+                if (canAdminEdit && title.trim().length < 3) {
+                  setError("Task title must be at least 3 characters.");
+                  return;
+                }
+                await api.patchTask(task.id, {
+                  status,
+                  ...(canAdminEdit ? { title: title.trim(), description: description.trim() || undefined } : {})
+                });
                 await onUpdated();
               } catch (e) {
                 setError(e instanceof Error ? e.message : "Update failed");
@@ -587,7 +700,7 @@ function TaskEditorRow({
           </button>
           <button
             className="btn btnDanger"
-            disabled={busy}
+            disabled={busy || !canAdminEdit}
             onClick={async () => {
               setBusy(true);
               setError(null);

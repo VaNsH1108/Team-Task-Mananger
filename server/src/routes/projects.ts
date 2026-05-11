@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../prisma.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import type { AuthedRequest } from "../types.js";
-import { AddMemberSchema, CreateProjectSchema } from "../validators/project.js";
+import { AddMemberSchema, CreateProjectSchema, UpdateProjectSchema } from "../validators/project.js";
 import { getUserProjectRole, isAdmin } from "../rbac.js";
 import { ProjectRole } from "@prisma/client";
 
@@ -61,6 +61,26 @@ projectsRouter.get("/:projectId", requireAuth, async (req: AuthedRequest, res) =
     }
   });
   if (!project) return res.status(404).json({ error: "Project not found" });
+
+  return res.json({ project });
+});
+
+projectsRouter.patch("/:projectId", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const projectId = req.params.projectId as string;
+  const patch = UpdateProjectSchema.parse(req.body);
+
+  const role = await getUserProjectRole(userId, projectId);
+  if (!isAdmin(role)) return res.status(403).json({ error: "Admin role required" });
+
+  const project = await prisma.project.update({
+    where: { id: projectId },
+    data: {
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.description !== undefined ? { description: patch.description } : {})
+    },
+    select: { id: true, name: true, description: true, updatedAt: true }
+  });
 
   return res.json({ project });
 });

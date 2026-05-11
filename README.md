@@ -35,7 +35,18 @@ npm run prisma:generate
 npm run prisma:migrate
 ```
 
-4) Run dev
+4) Seed production-like starter data (optional but recommended)
+
+```bash
+npm run seed
+```
+
+Creates:
+- Admin user: `admin@ethara.app` / `AdminPass123`
+- Member user: `member@ethara.app` / `MemberPass123`
+- One project with member/admin roles and starter tasks
+
+5) Run dev
 
 ```bash
 npm run dev
@@ -58,13 +69,21 @@ npm run dev
 - **Project creator**: Admin
 - **Project Admin** can:
   - add/remove members
+  - rename/update project details
+  - create tasks
   - assign/reassign tasks to other users
   - edit/delete any task
 - **Project Member** can:
-  - view projects/tasks
-  - create tasks
-  - update task status
-  - edit/delete only tasks they created
+  - view projects/tasks/dashboard
+  - update status only for tasks assigned to them
+  - cannot rename project or create/edit/delete task details
+
+### Production readiness highlights
+- Strong authentication validation (email normalization + password strength rules)
+- Server-side and client-side form validation with clear error messages
+- Strict RBAC enforcement on APIs (backend is source of truth)
+- Secure JWT protected REST APIs
+- Railway-ready single-service deployment with PostgreSQL support
 
 ### API (high level)
 - `POST /api/auth/signup`
