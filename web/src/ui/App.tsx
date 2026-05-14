@@ -179,10 +179,11 @@ function AuthCard({ onAuth, setError }: {
   onAuth: (token: string, user: { id: string; email: string; name: string }) => Promise<void>;
   setError: (s: string | null) => void;
 }) {
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "verify">("login");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -190,55 +191,109 @@ function AuthCard({ onAuth, setError }: {
     setError(null);
     setValidationError(null);
     const cleanedEmail = email.trim().toLowerCase();
-    if (!isEmail(cleanedEmail)) return setValidationError("Please enter a valid email address.");
-    if (mode === "signup" && name.trim().length < 2) return setValidationError("Name must be at least 2 characters.");
-    const passErr = mode === "signup" ? validatePassword(password) : null;
-    if (passErr) return setValidationError(passErr);
+    
+    if (mode === "login") {
+      if (!isEmail(cleanedEmail)) return setValidationError("Please enter a valid email address.");
+      const passErr = validatePassword(password);
+      if (passErr) return setValidationError(passErr);
 
-    setBusy(true);
-    try {
-      const data = mode === "login"
-        ? await api.login({ email: cleanedEmail, password })
-        : await api.signup({ email: cleanedEmail, name: name.trim(), password });
-      await onAuth(data.accessToken, data.user);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Authentication failed");
-    } finally {
-      setBusy(false);
+      setBusy(true);
+      try {
+        const data = await api.login({ email: cleanedEmail, password });
+        await onAuth(data.accessToken, data.user);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Login failed");
+      } finally {
+        setBusy(false);
+      }
+    } else if (mode === "signup") {
+      if (!isEmail(cleanedEmail)) return setValidationError("Please enter a valid email address.");
+      if (!cleanedEmail.endsWith("@gmail.com") && !cleanedEmail.endsWith("@googlemail.com")) {
+        return setValidationError("Please use a Gmail address to sign up.");
+      }
+      if (name.trim().length < 2) return setValidationError("Name must be at least 2 characters.");
+
+      setBusy(true);
+      try {
+        await api.requestCode({ email: cleanedEmail });
+        setValidationError(null);
+        setMode("verify");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to send verification code");
+      } finally {
+        setBusy(false);
+      }
+    } else if (mode === "verify") {
+      if (code.trim().length !== 6) return setValidationError("Enter the 6-digit code.");
+
+      setBusy(true);
+      try {
+        const data = await api.verifyCode({ email: cleanedEmail, code: code.trim(), name: name.trim() });
+        await onAuth(data.accessToken, data.user);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Verification failed");
+      } finally {
+        setBusy(false);
+      }
     }
   };
 
   return (
     <div className="card" style={{ maxWidth: 560, margin: "0 auto" }}>
       <div className="cardHeader">
-        <h2 className="title">{mode === "login" ? "Welcome back" : "Create your workspace account"}</h2>
-        <button className="btn btnGhost" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
-          {mode === "login" ? "Need an account?" : "Already have an account?"}
-        </button>
+        <h2 className="title">
+          {mode === "login" ? "Welcome back" : mode === "signup" ? "Create your workspace account" : "Verify your email"}
+        </h2>
+        {mode !== "verify" && (
+          <button className="btn btnGhost" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setValidationError(null); setCode(""); }}>
+            {mode === "login" ? "Need an account?" : "Already have an account?"}
+          </button>
+        )}
       </div>
 
-      <div className="demoProfiles">
-        <div className="profileCard"><strong>Admin</strong><div className="muted">Can manage members, projects and all tasks.</div></div>
-        <div className="profileCard"><strong>Member</strong><div className="muted">Can work on assigned tasks with controlled access.</div></div>
-      </div>
-      <div className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
-        Sign up creates your workspace account. Project admins invite members and control who can create and manage projects.
-      </div>
+      {mode !== "verify" && (
+        <div className="demoProfiles">
+          <div className="profileCard"><strong>Admin</strong><div className="muted">Can manage members, projects and all tasks.</div></div>
+          <div className="profileCard"><strong>Member</strong><div className="muted">Can work on assigned tasks with controlled access.</div></div>
+        </div>
+      )}
+      {mode !== "verify" && (
+        <div className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
+          {mode === "login" ? "Use your existing credentials to log in." : "Sign up with your Gmail account. Project admins invite members and control who can create and manage projects."}
+        </div>
+      )}
+      {mode === "verify" && (
+        <div className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
+          We sent a 6-digit code to <strong>{email}</strong>. Enter it below to verify.
+        </div>
+      )}
 
-      <label className="label">Work Email</label>
-      <input className="input" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-      {mode === "signup" && (
+      {mode !== "verify" && (
         <>
-          <label className="label">Full Name</label>
-          <input className="input" placeholder="e.g. Rohan Sharma" value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="label">Work Email</label>
+          <input className="input" placeholder="name@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          {mode === "signup" && (
+            <>
+              <label className="label">Full Name</label>
+              <input className="input" placeholder="e.g. Rohan Sharma" value={name} onChange={(e) => setName(e.target.value)} />
+            </>
+          )}
+          <label className="label">Password</label>
+          <input className="input" type="password" placeholder="Minimum 8 chars, uppercase, lowercase, number" value={password} onChange={(e) => setPassword(e.target.value)} />
         </>
       )}
-      <label className="label">Password</label>
-      <input className="input" type="password" placeholder="Minimum 8 chars, uppercase, lowercase, number" value={password} onChange={(e) => setPassword(e.target.value)} />
+
+      {mode === "verify" && (
+        <>
+          <label className="label">Verification Code</label>
+          <input className="input" placeholder="000000" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} maxLength={6} />
+        </>
+      )}
+
       {validationError && <div className="error" style={{ marginTop: 10 }}>{validationError}</div>}
       <div style={{ height: 12 }} />
       <button className="btn btnPrimary" disabled={busy} onClick={submit}>
-        {busy ? "Please wait..." : mode === "login" ? "Login Securely" : "Create Account"}
+        {busy ? "Please wait..." : mode === "login" ? "Login Securely" : mode === "signup" ? "Send Code" : "Verify & Create Account"}
       </button>
     </div>
   );
