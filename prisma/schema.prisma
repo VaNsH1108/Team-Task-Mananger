@@ -81,3 +81,16 @@ model Task {
   @@index([dueDate])
 }
 
+model EmailVerification {
+  id         String   @id @default(cuid())
+  email      String
+  code       String
+  used       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([email])
+  @@index([expiresAt])
+  @@index([code])
+}
+

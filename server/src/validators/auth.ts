@@ -1,12 +1,14 @@
 import { z } from "zod";
 
-const PasswordSchema = z
-  .string()
-  .min(8, "Password must be at least 8 characters")
-  .max(72, "Password must be at most 72 characters")
-  .regex(/[A-Z]/, "Password must include at least one uppercase letter")
-  .regex(/[a-z]/, "Password must include at least one lowercase letter")
-  .regex(/[0-9]/, "Password must include at least one number");
+export const EmailSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address")
+});
+
+export const VerifyCodeSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address"),
+  code: z.string().trim().length(6, "Enter the 6-digit verification code"),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(80, "Name must be at most 80 characters").optional()
+});
 
 export const SignupSchema = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address"),
@@ -15,7 +17,7 @@ export const SignupSchema = z.object({
     .trim()
     .min(2, "Name must be at least 2 characters")
     .max(80, "Name must be at most 80 characters"),
-  password: PasswordSchema
+  password: z.string().min(1, "Password is required")
 });
 
 export const LoginSchema = z.object({

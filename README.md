@@ -42,9 +42,15 @@ npm run seed
 ```
 
 Creates:
-- Admin user: `admin@ethara.app` / `AdminPass123`
-- Member user: `member@ethara.app` / `MemberPass123`
+- Admin user: `admin@ethara.app` / `AdminPass2026!`
+- Member user: `member@ethara.app` / `MemberPass2026!`
 - One project with member/admin roles and starter tasks
+
+If you want to start with a clean database and rebuild seed data from scratch:
+
+```bash
+npm run seed:reset
+```
 
 5) Run dev
 
@@ -67,6 +73,7 @@ npm run dev
 
 ### RBAC rules (implemented)
 - **Project creator**: Admin
+- **Signup flow**: creating an account registers a workspace user. Role-specific access is granted later when an admin adds the user to a project.
 - **Project Admin** can:
   - add/remove members
   - rename/update project details

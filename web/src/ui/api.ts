@@ -63,6 +63,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  requestCode: (body: { email: string }) =>
+    request<{ ok: boolean }>("/api/auth/request-code", { method: "POST", body: JSON.stringify(body) }),
+  verifyCode: (body: { email: string; code: string; name?: string }) =>
+    request<AuthResponse>("/api/auth/verify-code", { method: "POST", body: JSON.stringify(body) }),
   signup: (body: { email: string; name: string; password: string }) =>
     request<AuthResponse>("/api/auth/signup", { method: "POST", body: JSON.stringify(body) }),
   login: (body: { email: string; password: string }) =>
@@ -77,6 +81,15 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body)
     }),
+  deleteProject: (projectId: string) =>
+    fetch(`/api/projects/${projectId}`, {
+      method: "DELETE",
+      headers: {
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
+      }
+    }).then((r) => {
+      if (!r.ok) throw new Error("Delete failed");
+    }),
   addMember: (projectId: string, body: { email: string; role?: ProjectRole }) =>
     request<{ member: { id: string; role: ProjectRole; user: { id: string; email: string; name: string } } }>(
       `/api/projects/${projectId}/members`,
@@ -85,6 +98,15 @@ export const api = {
       body: JSON.stringify(body)
       }
     ),
+  deleteMember: (projectId: string, memberUserId: string) =>
+    fetch(`/api/projects/${projectId}/members/${memberUserId}`, {
+      method: "DELETE",
+      headers: {
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
+      }
+    }).then((r) => {
+      if (!r.ok) throw new Error("Delete member failed");
+    }),
   listTasks: (projectId?: string) =>
     request<{ tasks: Task[] }>(projectId ? `/api/tasks?projectId=${encodeURIComponent(projectId)}` : "/api/tasks"),
   createTask: (body: {

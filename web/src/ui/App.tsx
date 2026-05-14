@@ -29,15 +29,22 @@ export function App() {
     myTasks: Task[];
   } | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [dashboardFilterStatus, setDashboardFilterStatus] = useState<"ALL" | TaskStatus>("ALL");
 
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) ?? null,
     [projects, activeProjectId]
   );
+  
   const activeMembershipRole = useMemo(() => {
     if (!activeProject || !user) return null;
     return activeProject.members?.find((m) => m.userId === user.id)?.role ?? null;
   }, [activeProject, user]);
+
+  // Check if user is admin in any project
+  const isAdminInAny = useMemo(() => {
+    return projects.some((p) => p.members?.some((m) => m.userId === user?.id && m.role === "ADMIN"));
+  }, [projects, user?.id]);
 
   async function refreshAll() {
     const [p, d] = await Promise.all([api.listProjects(), api.dashboard()]);
@@ -114,11 +121,24 @@ export function App() {
         {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
 
         {view === "auth" && <AuthCard onAuth={onAuth} setError={setError} />}
-        {user && view === "dashboard" && dashboard && <DashboardCard dashboard={dashboard} onRefresh={refreshAll} />}
+        {user && view === "dashboard" && dashboard && (
+          <DashboardCard
+            user={user}
+            projects={projects}
+            dashboard={dashboard}
+            onRefresh={refreshAll}
+            onOpenProject={async (id) => {
+              setActiveProjectId(id);
+              setView("project");
+              await refreshTasks(id);
+            }}
+          />
+        )}
 
         {user && view === "projects" && (
           <div className="split">
             <ProjectsCard
+              user={user}
               projects={projects}
               activeProjectId={activeProjectId}
               onSelect={async (id) => { setActiveProjectId(id); setView("project"); await refreshTasks(id); }}
@@ -132,6 +152,7 @@ export function App() {
         {user && view === "project" && activeProjectId && (
           <div className="split">
             <ProjectsCard
+              user={user}
               projects={projects}
               activeProjectId={activeProjectId}
               onSelect={async (id) => { setActiveProjectId(id); await refreshTasks(id); }}
@@ -200,6 +221,9 @@ function AuthCard({ onAuth, setError }: {
         <div className="profileCard"><strong>Admin</strong><div className="muted">Can manage members, projects and all tasks.</div></div>
         <div className="profileCard"><strong>Member</strong><div className="muted">Can work on assigned tasks with controlled access.</div></div>
       </div>
+      <div className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
+        Sign up creates your workspace account. Project admins invite members and control who can create and manage projects.
+      </div>
 
       <label className="label">Work Email</label>
       <input className="input" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -221,72 +245,126 @@ function AuthCard({ onAuth, setError }: {
 }
 
 function DashboardCard({
+  user,
+  projects,
   dashboard,
-  onRefresh
+  onRefresh,
+  onOpenProject
 }: {
+  user: { id: string; email: string; name: string };
+  projects: Project[];
   dashboard: {
     statusCounts: { TODO: number; IN_PROGRESS: number; DONE: number };
     overdueAssigned: Task[];
     myTasks: Task[];
   };
   onRefresh: () => Promise<void>;
+  onOpenProject: (projectId: string) => Promise<void>;
 }) {
   return (
-    <div className="grid2">
-      <div className="card">
-        <div className="cardHeader">
-          <h2 className="title">Status overview</h2>
-          <button className="btn" onClick={onRefresh}>
-            Refresh
-          </button>
+    <>
+      <div className="grid3" style={{ marginBottom: 24 }}>
+        <div className="card" style={{ cursor: "default" }}>
+          <div className="muted" style={{ fontSize: 13, fontWeight: 600 }}>📝 TODO</div>
+          <div className="kpi" style={{ marginTop: 12 }}>{dashboard.statusCounts.TODO}</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Tasks waiting to start</div>
         </div>
-        <div className="grid3">
-          <div className="card" style={{ flex: 1, minWidth: 180 }}>
-            <div className="muted">TODO</div>
-            <div className="kpi">{dashboard.statusCounts.TODO}</div>
-          </div>
-          <div className="card" style={{ flex: 1, minWidth: 180 }}>
-            <div className="muted">IN PROGRESS</div>
-            <div className="kpi">{dashboard.statusCounts.IN_PROGRESS}</div>
-          </div>
-          <div className="card" style={{ flex: 1, minWidth: 180 }}>
-            <div className="muted">DONE</div>
-            <div className="kpi">{dashboard.statusCounts.DONE}</div>
-          </div>
+        <div className="card" style={{ cursor: "default" }}>
+          <div className="muted" style={{ fontSize: 13, fontWeight: 600 }}>⚙️ IN PROGRESS</div>
+          <div className="kpi" style={{ marginTop: 12 }}>{dashboard.statusCounts.IN_PROGRESS}</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Work currently in motion</div>
         </div>
-      </div>
-      <div className="card">
-        <div className="cardHeader">
-          <h2 className="title">Overdue (assigned to me)</h2>
+        <div className="card" style={{ cursor: "default" }}>
+          <div className="muted" style={{ fontSize: 13, fontWeight: 600 }}>✅ DONE</div>
+          <div className="kpi" style={{ marginTop: 12 }}>{dashboard.statusCounts.DONE}</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Completed work</div>
         </div>
-        {dashboard.overdueAssigned.length === 0 ? (
-          <div className="muted">No overdue tasks. Nice.</div>
-        ) : (
-          dashboard.overdueAssigned.map((t) => <TaskRow key={t.id} task={t} />)
-        )}
       </div>
 
-      <div className="card" style={{ gridColumn: "1 / -1" }}>
-        <div className="cardHeader">
-          <h2 className="title">My tasks</h2>
+      {dashboard.overdueAssigned.length > 0 && (
+        <div className="card" style={{ borderLeft: "4px solid var(--danger)", marginBottom: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--danger)" }}>⏰ Overdue Tasks</div>
+              <div className="muted" style={{ fontSize: 13 }}>Tasks assigned to you that need attention.</div>
+            </div>
+            <button className="btn btnGhost" onClick={onRefresh}>Refresh</button>
+          </div>
+          {dashboard.overdueAssigned.map((task) => (
+            <div key={task.id} style={{ padding: 10, borderRadius: 16, background: "rgba(255, 154, 154, 0.08)", marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{task.title}</div>
+              <div className="muted" style={{ fontSize: 13 }}>Project: {task.project?.name || "Unknown"}</div>
+            </div>
+          ))}
         </div>
-        {dashboard.myTasks.length === 0 ? (
-          <div className="muted">No assigned tasks yet.</div>
-        ) : (
-          dashboard.myTasks.map((t) => <TaskRow key={t.id} task={t} />)
-        )}
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 className="title">📁 Active Projects</h2>
+          <div className="muted" style={{ fontSize: 14 }}>
+            Click a project to open tasks, members, and settings.
+          </div>
+        </div>
+        <button className="btn btnPrimary" onClick={onRefresh}>
+          🔄 Refresh
+        </button>
       </div>
-    </div>
+
+      {projects.length === 0 ? (
+        <div className="card" style={{ textAlign: "center", padding: 40 }}>
+          <div className="muted" style={{ fontSize: 16, marginBottom: 6 }}>
+            No projects available yet.
+          </div>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Only project admins can create workspace projects. Ask your admin to add your team.
+          </div>
+        </div>
+      ) : (
+        projects.map((project) => (
+          <button
+            key={project.id}
+            className="card"
+            style={{
+              width: "100%",
+              textAlign: "left",
+              marginBottom: 16,
+              padding: 18,
+              borderRadius: 18,
+              display: "block",
+              cursor: "pointer",
+              background: "rgba(255, 255, 255, 0.85)",
+              border: "1.5px solid var(--border-color)"
+            }}
+            onClick={async () => {
+              await onOpenProject(project.id);
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6, color: "var(--text-primary)" }}>
+              {project.name}
+            </div>
+            <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+              {project.description || "No description available."}
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              {project.members?.length ?? 0} team member{project.members && project.members.length === 1 ? "" : "s"}
+            </div>
+          </button>
+        ))
+      )}
+    </>
   );
 }
 
 function ProjectsCard({
+  user,
   projects,
   activeProjectId,
   onSelect,
   onCreated,
   setError
 }: {
+  user: { id: string; email: string; name: string };
   projects: Project[];
   activeProjectId: string | null;
   onSelect: (id: string) => void | Promise<void>;
@@ -298,76 +376,135 @@ function ProjectsCard({
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  const isAdminInAny = projects.some((p) => p.members?.some((m) => m.userId === user.id && m.role === "ADMIN"));
+  const canCreateProject = isAdminInAny;
+
   return (
     <div className="card">
       <div className="cardHeader">
-        <h2 className="title">Projects</h2>
-      </div>
-
-      <div className="muted" style={{ marginBottom: 10 }}>
-        Your projects (member or admin).
-      </div>
-
-      {projects.length === 0 && <div className="muted">No projects yet.</div>}
-      {projects.map((p) => (
-        <button
-          key={p.id}
-          className="btn"
-          style={{
-            width: "100%",
-            textAlign: "left",
-            marginBottom: 10,
-            borderColor: p.id === activeProjectId ? "rgba(110,168,254,0.6)" : undefined
-          }}
-          onClick={() => onSelect(p.id)}
-        >
-          <div style={{ fontWeight: 900 }}>{p.name}</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            {p.description || "No description"}
+        <div>
+          <h2 className="title">📁 Projects</h2>
+          <div className="muted" style={{ marginTop: 4 }}>
+            {canCreateProject ? "Create a project or choose an existing workspace." : "You have access to projects, but only admins may create new workspaces."}
           </div>
-        </button>
-      ))}
-
-      <div style={{ height: 14 }} />
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ fontWeight: 900, marginBottom: 6 }}>Create new project</div>
-        <label className="label">Name</label>
-        <input className="input" placeholder="Product Revamp Q3" value={name} onChange={(e) => setName(e.target.value)} />
-        <label className="label">Description</label>
-        <input
-          className="input"
-          placeholder="Describe project scope, goals and deliverables"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-        {localError && <div className="error" style={{ marginTop: 10 }}>{localError}</div>}
-        <div style={{ height: 10 }} />
-        <button
-          className="btn btnPrimary"
-          disabled={busy}
-          onClick={async () => {
-            setLocalError(null);
-            if (name.trim().length < 2) {
-              setLocalError("Project name must be at least 2 characters.");
-              return;
-            }
-            setBusy(true);
-            setError(null);
-            try {
-              await api.createProject({ name: name.trim(), description: description.trim() || undefined });
-              setName("");
-              setDescription("");
-              await onCreated();
-            } catch (e) {
-              setError(e instanceof Error ? e.message : "Failed to create project");
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? "Creating…" : "Create project"}
-        </button>
+        </div>
       </div>
+
+      <div className="muted" style={{ marginBottom: 14 }}>
+        Your active projects (member or admin).
+      </div>
+
+      {projects.length === 0 && <div className="muted" style={{ textAlign: "center", padding: 20, opacity: 0.7 }}>No projects yet. Create one to get started!</div>}
+      {projects.map((p) => {
+        const isAdminInThis = p.members?.some((m) => m.userId === user.id && m.role === "ADMIN") ?? false;
+        return (
+          <div key={p.id} style={{ position: "relative" }}>
+            <button
+              className="btn"
+              style={{
+                width: "100%",
+                textAlign: "left",
+                marginBottom: 10,
+                padding: 14,
+                borderColor: p.id === activeProjectId ? "var(--accent-purple)" : undefined,
+                background: p.id === activeProjectId ? "rgba(200, 167, 255, 0.15)" : "rgba(255, 255, 255, 0.4)",
+                borderRadius: 16,
+                display: "block",
+                transition: "all 0.25s ease"
+              }}
+              onClick={() => onSelect(p.id)}
+            >
+              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4, color: "var(--text-primary)" }}>{p.name}</div>
+              <div className="muted" style={{ fontSize: 13 }}>
+                {p.description || "No description"}
+              </div>
+            </button>
+            {isAdminInThis && (
+              <button
+                className="btn btnDanger"
+                style={{
+                  position: "absolute",
+                  top: 10,
+                  right: 10,
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  borderRadius: 8
+                }}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!confirm(`Delete project "${p.name}"? This will delete all tasks and memberships.`)) return;
+                  try {
+                    await api.deleteProject(p.id);
+                    await onCreated();
+                  } catch (err: any) {
+                    setError(err.message || "Failed to delete project");
+                  }
+                }}
+              >
+                🗑️
+              </button>
+            )}
+          </div>
+        );
+      })}
+
+      <div style={{ height: 18 }} />
+      {canCreateProject ? (
+        <div className="card" style={{ padding: 18, background: "rgba(200, 167, 255, 0.08)", borderColor: "var(--accent-purple)" }}>
+          <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 16, color: "var(--text-primary)" }}>✨ Create new project</div>
+          <div className="muted" style={{ marginBottom: 14, fontSize: 13 }}>
+            {projects.length === 0
+              ? "Start your workspace by creating the first project."
+              : "As an admin, you can create a new project for your team."}
+          </div>
+          <label className="label">Project name</label>
+          <input className="input" placeholder="e.g., Q3 Product Redesign" value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="label">Description (optional)</label>
+          <input
+            className="input"
+            placeholder="Describe project scope, goals and deliverables..."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          {localError && <div className="error" style={{ marginTop: 12 }}>{localError}</div>}
+          <div style={{ height: 12 }} />
+          <button
+            className="btn btnPrimary"
+            style={{ width: "100%" }}
+            disabled={busy}
+            onClick={async () => {
+              setLocalError(null);
+              if (name.trim().length < 2) {
+                setLocalError("Project name must be at least 2 characters.");
+                return;
+              }
+              setBusy(true);
+              setError(null);
+              try {
+                await api.createProject({ name: name.trim(), description: description.trim() || undefined });
+                setName("");
+                setDescription("");
+                await onCreated();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Failed to create project");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Creating…" : "Create project"}
+          </button>
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 18, background: "rgba(200, 167, 255, 0.08)", borderColor: "var(--text-muted)", textAlign: "center" }}>
+          <div className="muted" style={{ fontSize: 14 }}>
+            👤 <strong>Member Mode</strong><br />
+            <span style={{ fontSize: 13 }}>
+              Only project admins may create new projects. If you are not an admin yet, ask an existing admin to invite you to a project.
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -425,6 +562,9 @@ function ProjectDetailCard({
         <div>
           <h2 className="title">{project.name}</h2>
           <div className="muted">{project.description || "No description"}</div>
+          <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
+            Updated {new Date(project.updatedAt).toLocaleDateString()} • {members.length} team member{members.length === 1 ? "" : "s"}
+          </div>
         </div>
         <button
           className="btn"
@@ -438,134 +578,190 @@ function ProjectDetailCard({
       </div>
 
       <div className="grid2">
-        <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>Create task</div>
-          {!isAdmin && (
-            <div className="muted" style={{ marginBottom: 8 }}>
-              Member mode: only admins can create/edit/delete tasks.
-            </div>
-          )}
-          <label className="label">Title</label>
-          <input className="input" disabled={!isAdmin} placeholder="Write API contracts for payment module" value={title} onChange={(e) => setTitle(e.target.value)} />
-          <label className="label">Description</label>
-          <textarea
-            className="textarea"
-            disabled={!isAdmin}
-            placeholder="Acceptance criteria, context and implementation notes"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <label className="label">Assign to</label>
-          <select className="select" disabled={!isAdmin} value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)}>
-            <option value="">Unassigned</option>
-            {members.map((m) => (
-              <option key={m.user.email} value={m.user.id ?? ""}>{m.user.name} ({m.role})</option>
-            ))}
-          </select>
-          <label className="label">Due date (optional)</label>
-          <input className="input" type="date" disabled={!isAdmin} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-          <div style={{ height: 10 }} />
-          {localError && <div className="error" style={{ marginTop: 10 }}>{localError}</div>}
-          <button
-            className="btn btnPrimary"
-            disabled={busy || !isAdmin}
-            onClick={async () => {
-              setLocalError(null);
-              if (title.trim().length < 3) {
-                setLocalError("Task title must be at least 3 characters.");
-                return;
-              }
-              setError(null);
-              setBusy(true);
-              try {
-                await api.createTask({
-                  projectId: project.id,
-                  title: title.trim(),
-                  description: description.trim() || undefined,
-                  assignedToId: assignedToId || undefined,
-                  dueDate: dueDate ? new Date(dueDate).toISOString() : undefined
-                });
-                setTitle("");
-                setDescription("");
-                setDueDate("");
-                setAssignedToId("");
-                await onRefreshTasks();
-              } catch (e) {
-                setError(e instanceof Error ? e.message : "Failed to create task");
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {busy ? "Creating…" : "Create task"}
-          </button>
-        </div>
-
-        <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>Project controls</div>
-          <div className="muted" style={{ marginBottom: 8 }}>
-            {isAdmin ? "Admin mode: you can rename the project." : "Member mode: project settings are read-only."}
+        {isAdmin && (
+          <div className="card">
+            <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 15, color: "var(--text-primary)" }}>✏️ Create task</div>
+            <label className="label">Title</label>
+            <input className="input" placeholder="Write API contracts for payment module" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <label className="label">Description</label>
+            <textarea
+              className="textarea"
+              placeholder="Acceptance criteria, context and implementation notes"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+            <label className="label">Assign to</label>
+            <select className="select" value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)}>
+              <option value="">Unassigned</option>
+              {members.map((m) => (
+                <option key={m.user.email} value={m.user.id ?? ""}>{m.user.name} ({m.role})</option>
+              ))}
+            </select>
+            <label className="label">Due date (optional)</label>
+            <input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            <div style={{ height: 10 }} />
+            {localError && <div className="error" style={{ marginTop: 10 }}>{localError}</div>}
+            <button
+              className="btn btnPrimary"
+              disabled={busy}
+              onClick={async () => {
+                setLocalError(null);
+                if (title.trim().length < 3) {
+                  setLocalError("Task title must be at least 3 characters.");
+                  return;
+                }
+                setError(null);
+                setBusy(true);
+                try {
+                  await api.createTask({
+                    projectId: project.id,
+                    title: title.trim(),
+                    description: description.trim() || undefined,
+                    assignedToId: assignedToId || undefined,
+                    dueDate: dueDate ? new Date(dueDate).toISOString() : undefined
+                  });
+                  setTitle("");
+                  setDescription("");
+                  setDueDate("");
+                  setAssignedToId("");
+                  await onRefreshTasks();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : "Failed to create task");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "Creating…" : "Create task"}
+            </button>
           </div>
-          <label className="label">Project name</label>
-          <input className="input" disabled={!isAdmin} placeholder="Project name" value={projectName} onChange={(e) => setProjectName(e.target.value)} />
-          <label className="label">Description</label>
-          <textarea className="textarea" disabled={!isAdmin} placeholder="Project description" value={projectDesc ?? ""} onChange={(e) => setProjectDesc(e.target.value)} />
-          <div style={{ height: 10 }} />
-          <button
-            className="btn"
-            disabled={!isAdmin}
-            onClick={async () => {
-              setError(null);
-              if (projectName.trim().length < 2) {
-                setError("Project name must be at least 2 characters.");
-                return;
-              }
-              try {
-                await api.patchProject(project.id, { name: projectName.trim(), description: projectDesc.trim() || null });
-                await onRefreshAll();
-              } catch (e) {
-                setError(e instanceof Error ? e.message : "Project update failed");
-              }
-            }}
-          >
-            Save project settings
-          </button>
+        )}
 
-          {isAdmin && (
-            <>
-              <hr style={{ borderColor: "rgba(255,255,255,0.16)", margin: "14px 0" }} />
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>Team member access</div>
-              <label className="label">Member email</label>
-              <input className="input" placeholder="member@company.com" value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
-              <label className="label">Role</label>
-              <select className="select" value={memberRole} onChange={(e) => setMemberRole(e.target.value as ProjectRole)}>
-                <option value="MEMBER">MEMBER</option>
-                <option value="ADMIN">ADMIN</option>
-              </select>
-              <div style={{ height: 10 }} />
-              <button
-                className="btn btnPrimary"
-                onClick={async () => {
-                  setError(null);
-                  if (!isEmail(memberEmail)) {
-                    setError("Please enter a valid member email.");
-                    return;
-                  }
-                  try {
-                    await api.addMember(project.id, { email: memberEmail.trim().toLowerCase(), role: memberRole });
-                    setMemberEmail("");
-                    setMemberRole("MEMBER");
-                    await onRefreshAll();
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : "Failed to add member");
-                  }
-                }}
-              >
-                Add member
-              </button>
-            </>
-          )}
-        </div>
+        {!isAdmin && (
+          <div className="card" style={{ background: "rgba(200, 167, 255, 0.08)", borderColor: "var(--accent-purple)" }}>
+            <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 15, color: "var(--text-primary)" }}>👤 Member Mode</div>
+            <div className="muted" style={{ fontSize: 13 }}>
+              You can update task status (TODO → In Progress → Done) for tasks assigned to you. Project settings are managed by admins.
+            </div>
+          </div>
+        )}
+
+        {isAdmin && (
+          <div className="card">
+            <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 15, color: "var(--text-primary)" }}>⚙️ Project controls</div>
+            <div className="muted" style={{ marginBottom: 12, fontSize: 13 }}>
+              Admin mode: manage project details and team members.
+            </div>
+            <label className="label">Project name</label>
+            <input className="input" placeholder="Project name" value={projectName} onChange={(e) => setProjectName(e.target.value)} />
+            <label className="label">Description</label>
+            <textarea className="textarea" placeholder="Project description" value={projectDesc ?? ""} onChange={(e) => setProjectDesc(e.target.value)} />
+            <div style={{ height: 10 }} />
+            <button
+              className="btn btnPrimary"
+              onClick={async () => {
+                setError(null);
+                if (projectName.trim().length < 2) {
+                  setError("Project name must be at least 2 characters.");
+                  return;
+                }
+                try {
+                  await api.patchProject(project.id, { name: projectName.trim(), description: projectDesc.trim() || null });
+                  await onRefreshAll();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : "Project update failed");
+                }
+              }}
+            >
+              Save project settings
+            </button>
+
+            <hr style={{ borderColor: "var(--border-color)", margin: "14px 0" }} />
+            <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 15, color: "var(--text-primary)" }}>👥 Team member access</div>
+            <label className="label">Member email</label>
+            <input className="input" placeholder="member@company.com" value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
+            <label className="label">Role</label>
+            <select className="select" value={memberRole} onChange={(e) => setMemberRole(e.target.value as ProjectRole)}>
+              <option value="MEMBER">MEMBER</option>
+              <option value="ADMIN">ADMIN</option>
+            </select>
+            <div style={{ height: 10 }} />
+            <button
+              className="btn btnPrimary"
+              onClick={async () => {
+                setError(null);
+                if (!isEmail(memberEmail)) {
+                  setError("Please enter a valid member email.");
+                  return;
+                }
+                try {
+                  await api.addMember(project.id, { email: memberEmail.trim().toLowerCase(), role: memberRole });
+                  setMemberEmail("");
+                  setMemberRole("MEMBER");
+                  await onRefreshAll();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : "Failed to add member");
+                }
+              }}
+            >
+              Add member
+            </button>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="card">
+            <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 15, color: "var(--text-primary)" }}>👥 Team members</div>
+            <div className="muted" style={{ marginBottom: 12, fontSize: 13 }}>
+              Manage team membership and roles for this project.
+            </div>
+            {members.length === 0 ? (
+              <div className="muted">No members are assigned to this project yet.</div>
+            ) : (
+              members.map((member) => {
+                const memberId = member.user.id ?? "";
+                return (
+                  <div
+                    key={memberId || member.user.email}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 12,
+                      marginBottom: 10,
+                      flexWrap: "wrap"
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700 }}>{member.user.name}</div>
+                      <div className="muted" style={{ fontSize: 13 }}>{member.user.email}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span className={`badge ${member.role === "ADMIN" ? "badgeAdmin" : "badgeMember"}`}>{member.role}</span>
+                      {memberId && memberId !== user.id && (
+                        <button
+                          className="btn btnDanger btnSmall"
+                          onClick={async () => {
+                            setError(null);
+                            if (!confirm(`Remove ${member.user.name} from this project?`)) return;
+                            try {
+                              await api.deleteMember(project.id, memberId);
+                              await onRefreshAll();
+                              await onRefreshTasks();
+                            } catch (e) {
+                              setError(e instanceof Error ? e.message : "Failed to remove member");
+                            }
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
       <div className="card" style={{ marginTop: 14 }}>
           <div style={{ fontWeight: 900, marginBottom: 6 }}>Filter tasks</div>
@@ -606,18 +802,30 @@ function ProjectDetailCard({
 
 function TaskRow({ task }: { task: Task }) {
   const due = task.dueDate ? new Date(task.dueDate).toLocaleDateString() : null;
+  const isOverdue = due && new Date(task.dueDate!) < new Date() && task.status !== "DONE";
+  
   return (
-    <div className="card" style={{ padding: 12, marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <div style={{ fontWeight: 900 }}>{task.title}</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            {task.project?.name ? `Project: ${task.project.name}` : ""}
-            {due ? ` • Due: ${due}` : ""}
-          </div>
+    <div className="card" style={{ 
+      padding: 16, 
+      marginBottom: 12,
+      display: "flex", 
+      justifyContent: "space-between", 
+      alignItems: "center",
+      gap: 16,
+      borderLeft: `4px solid ${task.status === "TODO" ? "#ffd4a8" : task.status === "IN_PROGRESS" ? "#a8d8ff" : "#a8f0d8"}`,
+      transition: "all 0.3s ease"
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4, color: "var(--text-primary)" }}>{task.title}</div>
+        <div className="muted" style={{ fontSize: 13 }}>
+          {task.project?.name && <span>📁 {task.project.name}</span>}
+          {task.project?.name && due && <span> • </span>}
+          {due && <span style={{ color: isOverdue ? "var(--danger)" : "var(--text-muted)" }}>
+            {isOverdue ? "⏰ " : "📅 "}{due}
+          </span>}
         </div>
-        <div className={`status status${task.status}`}>{task.status}</div>
       </div>
+      <div className={`status status${task.status}`}>{task.status.replace("_", " ")}</div>
     </div>
   );
 }
@@ -643,35 +851,45 @@ function TaskEditorRow({
   const [busy, setBusy] = useState(false);
 
   return (
-    <div className="card" style={{ padding: 12, marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-        <div style={{ minWidth: 0, width: "100%" }}>
+    <div className="card" style={{ 
+      padding: 18, 
+      marginBottom: 14,
+      borderLeft: `4px solid ${status === "TODO" ? "#ffd4a8" : status === "IN_PROGRESS" ? "#a8d8ff" : "#a8f0d8"}`,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <input
             className="input"
             disabled={!canAdminEdit}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Task title"
-            style={{ marginBottom: 8 }}
+            style={{ marginBottom: 10, fontSize: 15, fontWeight: 600 }}
           />
           <textarea
             className="textarea"
             disabled={!canAdminEdit}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Task description"
-            style={{ minHeight: 64 }}
+            placeholder="Add task description, acceptance criteria, or notes..."
+            style={{ minHeight: 70, marginBottom: 10, fontSize: 13 }}
           />
-          <div className="muted" style={{ fontSize: 12 }}>
-            {task.assignedTo?.name ? `Assigned: ${task.assignedTo.name} • ` : ""}
-            {task.dueDate ? `Due: ${new Date(task.dueDate).toLocaleDateString()}` : "No due date"}
+          <div className="muted" style={{ fontSize: 13 }}>
+            {task.assignedTo?.name ? `👤 Assigned to ${task.assignedTo.name} • ` : ""}
+            {task.dueDate ? `📅 ${new Date(task.dueDate).toLocaleDateString()}` : "No due date"}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <select className="select" value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}>
-            <option value="TODO">TODO</option>
-            <option value="IN_PROGRESS">IN_PROGRESS</option>
-            <option value="DONE">DONE</option>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", minWidth: "fit-content" }}>
+          <select 
+            className="select" 
+            value={status} 
+            disabled={!canAdminEdit && !canMemberUpdateStatus}
+            onChange={(e) => setStatus(e.target.value as TaskStatus)}
+            style={{ minWidth: 140 }}
+          >
+            <option value="TODO">📝 TODO</option>
+            <option value="IN_PROGRESS">⚙️ In Progress</option>
+            <option value="DONE">✅ Done</option>
           </select>
           <button
             className="btn btnPrimary"
@@ -696,7 +914,7 @@ function TaskEditorRow({
               }
             }}
           >
-            Save
+            {busy ? "Saving..." : "Save"}
           </button>
           <button
             className="btn btnDanger"
@@ -714,7 +932,7 @@ function TaskEditorRow({
               }
             }}
           >
-            Delete
+            🗑️
           </button>
         </div>
       </div>

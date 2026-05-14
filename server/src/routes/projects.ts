@@ -5,6 +5,7 @@ import type { AuthedRequest } from "../types.js";
 import { AddMemberSchema, CreateProjectSchema, UpdateProjectSchema } from "../validators/project.js";
 import { getUserProjectRole, isAdmin } from "../rbac.js";
 import { ProjectRole } from "@prisma/client";
+import { env } from "../env.js";
 
 export const projectsRouter = Router();
 
@@ -27,6 +28,23 @@ projectsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 projectsRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
   const userId = req.user!.id;
   const { name, description } = CreateProjectSchema.parse(req.body);
+
+  const existingProjectCount = await prisma.project.count();
+  const userEmail = req.user!.email.toLowerCase();
+  const founderEmail = env.FOUNDER_EMAIL.toLowerCase();
+
+  if (existingProjectCount === 0) {
+    if (userEmail !== founderEmail) {
+      return res.status(403).json({ error: "Only the founder can create the first project." });
+    }
+  } else {
+    const adminCount = await prisma.projectMember.count({
+      where: { userId, role: ProjectRole.ADMIN }
+    });
+    if (adminCount === 0) {
+      return res.status(403).json({ error: "Only existing project admins can create new projects" });
+    }
+  }
 
   const project = await prisma.project.create({
     data: {
@@ -71,6 +89,7 @@ projectsRouter.patch("/:projectId", requireAuth, async (req: AuthedRequest, res)
   const patch = UpdateProjectSchema.parse(req.body);
 
   const role = await getUserProjectRole(userId, projectId);
+  if (!role) return res.status(403).json({ error: "Not a project member" });
   if (!isAdmin(role)) return res.status(403).json({ error: "Admin role required" });
 
   const project = await prisma.project.update({
@@ -90,8 +109,10 @@ projectsRouter.post("/:projectId/members", requireAuth, async (req: AuthedReques
   const projectId = req.params.projectId as string;
   const { email, role } = AddMemberSchema.parse(req.body);
 
-  const myRole = await getUserProjectRole(userId, projectId);
-  if (!isAdmin(myRole)) return res.status(403).json({ error: "Admin role required" });
+  const isFounder = req.user!.email.toLowerCase() === env.FOUNDER_EMAIL.toLowerCase();
+  if (!isFounder) {
+    return res.status(403).json({ error: "Only the founder can invite users and assign roles." });
+  }
 
   const user = await prisma.user.findUnique({ where: { email }, select: { id: true, email: true, name: true } });
   if (!user) return res.status(404).json({ error: "User not found" });
@@ -112,11 +133,27 @@ projectsRouter.delete("/:projectId/members/:memberUserId", requireAuth, async (r
   const projectId = req.params.projectId as string;
   const memberUserId = req.params.memberUserId as string;
 
-  const myRole = await getUserProjectRole(userId, projectId);
-  if (!isAdmin(myRole)) return res.status(403).json({ error: "Admin role required" });
+  const isFounder = req.user!.email.toLowerCase() === env.FOUNDER_EMAIL.toLowerCase();
+  if (!isFounder) {
+    return res.status(403).json({ error: "Only the founder can remove project membership." });
+  }
 
   await prisma.projectMember.delete({
     where: { userId_projectId: { userId: memberUserId, projectId } }
+  });
+  return res.status(204).send();
+});
+
+projectsRouter.delete("/:projectId", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const projectId = req.params.projectId as string;
+
+  const role = await getUserProjectRole(userId, projectId);
+  if (!role) return res.status(403).json({ error: "Not a project member" });
+  if (!isAdmin(role)) return res.status(403).json({ error: "Admin role required" });
+
+  await prisma.project.delete({
+    where: { id: projectId }
   });
   return res.status(204).send();
 });
