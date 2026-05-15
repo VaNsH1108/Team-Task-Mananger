@@ -57,7 +57,7 @@ tasksRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
       createdById: userId,
       assignedToId: assignedToId ?? null
     },
-    select: { id: true, title: true, status: true, dueDate: true, projectId: true }
+    select: { id: true, title: true, status: true, dueDate: true, projectId: true, assignedToId: true, assignedTo: { select: { id: true, name: true, email: true } } }
   });
 
   return res.status(201).json({ task });

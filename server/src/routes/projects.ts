@@ -32,12 +32,13 @@ projectsRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
   const existingProjectCount = await prisma.project.count();
   const userEmail = req.user!.email.toLowerCase();
   const founderEmail = env.FOUNDER_EMAIL.toLowerCase();
+  const isFounder = userEmail === founderEmail;
 
   if (existingProjectCount === 0) {
-    if (userEmail !== founderEmail) {
+    if (!isFounder) {
       return res.status(403).json({ error: "Only the founder can create the first project." });
     }
-  } else {
+  } else if (!isFounder) {
     const adminCount = await prisma.projectMember.count({
       where: { userId, role: ProjectRole.ADMIN }
     });
@@ -110,8 +111,9 @@ projectsRouter.post("/:projectId/members", requireAuth, async (req: AuthedReques
   const { email, role } = AddMemberSchema.parse(req.body);
 
   const isFounder = req.user!.email.toLowerCase() === env.FOUNDER_EMAIL.toLowerCase();
-  if (!isFounder) {
-    return res.status(403).json({ error: "Only the founder can invite users and assign roles." });
+  const currentRole = await getUserProjectRole(userId, projectId);
+  if (!isFounder && currentRole !== ProjectRole.ADMIN) {
+    return res.status(403).json({ error: "Only project admins or the founder can invite users and assign roles." });
   }
 
   const user = await prisma.user.findUnique({ where: { email }, select: { id: true, email: true, name: true } });
@@ -134,8 +136,9 @@ projectsRouter.delete("/:projectId/members/:memberUserId", requireAuth, async (r
   const memberUserId = req.params.memberUserId as string;
 
   const isFounder = req.user!.email.toLowerCase() === env.FOUNDER_EMAIL.toLowerCase();
-  if (!isFounder) {
-    return res.status(403).json({ error: "Only the founder can remove project membership." });
+  const currentRole = await getUserProjectRole(userId, projectId);
+  if (!isFounder && currentRole !== ProjectRole.ADMIN) {
+    return res.status(403).json({ error: "Only project admins or the founder can remove project membership." });
   }
 
   await prisma.projectMember.delete({
